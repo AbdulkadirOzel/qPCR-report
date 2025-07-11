@@ -916,12 +916,6 @@ else:
                         significant_yearly_corr_df.to_excel(excel_buffer, index=False)
                         excel_buffer.seek(0) # Buffer'ı başa sarın ki içeriği okunabilsin
 
-                        st.download_button(
-                            label="Önemli Yıllık Korelasyonu İndir",
-                            data=excel_buffer.getvalue(), # Buffer'ın içeriğini (baytları) data parametresine verin
-                            file_name="significant_yearly_correlation.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
                     else:
                         st.info("Analiz yapıldı fakat Bonferroni düzeltmesi sonrası 0.05'ten küçük p-değerine sahip anlamlı sonuç bulunamadı.")
                 else:
@@ -1044,93 +1038,7 @@ else:
                     
                 
                 weekly_data_overall.sort_values(by='Week_Start_Date', inplace=True)
-                weekly_data_overall['Week_End_Date'] = weekly_data_overall['Week_Start_Date'] + timedelta(days=6)
-
-
-                st.subheader("Yıllık Gecikmeli Korelasyon Sonuçları")
-                # --- Yıllık Gecikmeli Korelasyon Analizi ---
-                yearly_correlation_results = []
-                years = weekly_data_overall['Yıl'].unique()
-
-                for year in years:
-                    yearly_df = weekly_data_overall[weekly_data_overall['Yıl'] == year].copy()
-                    
-                    if yearly_df.empty: continue
-
-                    for virus_col in lag_virus_cols:
-                        # Virüs prevalans kolonu yoksa atla
-                        if f'Prevalence_{virus_col}' not in yearly_df.columns:
-                            continue
-
-                        for lag in range(max_lag_weeks + 1):
-                            if len(yearly_df) > lag:
-                                lagged_env_col_data = yearly_df[f'Avg_{selected_env_col}'].shift(lag)
-                                
-                                temp_df = pd.DataFrame({
-                                    'Virüs_Haftası': yearly_df['Hafta'],
-                                    'Virüs_Tarihi': yearly_df['Hafta_Başı_Tarihi'],
-                                    'Çevresel_Haftası': yearly_df['Hafta'] - lag,
-                                    'Çevresel_Tarihi': yearly_df['Hafta_Başı_Tarihi'].shift(lag),
-                                    'Prevalence': yearly_df[f'Prevalence_{virus_col}'],
-                                    'Lagged_Env': lagged_env_col_data
-                                }).dropna()
-
-                                # Korelasyon için en az 2 veri noktası ve her iki seride de varyasyon olmalı
-                                if len(temp_df) > 1 and temp_df['Prevalence'].nunique() > 1 and temp_df['Lagged_Env'].nunique() > 1:
-                                    try:
-                                        r_value, p_value = sps.pearsonr(temp_df['Lagged_Env'], temp_df['Prevalence'])
-                                        
-                                        sig_level = ''
-                                        if p_value < 0.001: sig_level = '***'
-                                        elif p_value < 0.01: sig_level = '**'
-                                        elif p_value < 0.05: sig_level = '*'
-
-                                        yearly_correlation_results.append({
-                                            'Virüs': virus_col,
-                                            'Yıl': year,
-                                            'Gecikme (Hafta)': lag,
-                                            f'{selected_env_col}_Pearson_R': r_value,
-                                            'p-değeri': p_value,
-                                            'Anlamlılık': sig_level,
-                                            'Örnek_Sayısı': len(temp_df),
-                                            'Başlangıç_Tarihi': temp_df['Virüs_Tarihi'].min(),
-                                            'Bitiş_Tarihi': temp_df['Virüs_Tarihi'].max(),
-                                            'Çevresel_Başlangıç_Tarihi': temp_df['Çevresel_Tarihi'].min(),
-                                            'Çevresel_Bitiş_Tarihi': temp_df['Çevresel_Tarihi'].max(),
-                                        })
-                                    except Exception as e:
-                                        pass
-
-                yearly_corr_df = pd.DataFrame(yearly_correlation_results)
-
-                if not yearly_corr_df.empty:
-                    if 'p-değeri' in yearly_corr_df.columns and not yearly_corr_df['p-değeri'].empty:
-                        # Bonferroni düzeltmesi (Tüm testler için)
-                        reject, pvals_corrected, _, _ = multipletests(yearly_corr_df['p-değeri'], method='bonferroni', alpha=0.05)
-                        yearly_corr_df['Ayarlı_p-değeri'] = pvals_corrected
-                        
-                        significant_yearly_corr_df = yearly_corr_df[yearly_corr_df['Ayarlı_p-değeri'] < 0.05].copy()
-                        
-                        if not significant_yearly_corr_df.empty:
-                            st.dataframe(significant_yearly_corr_df.sort_values(by=['Yıl', 'Ayarlı_p-değeri']))
-                            
-                            # Yıllık Korelasyon sonuçlarını bellekteki bir Excel dosyasına kaydedin
-                            yearly_corr_excel_buffer = io.BytesIO()
-                            significant_yearly_corr_df.to_excel(yearly_corr_excel_buffer, index=False)
-                            yearly_corr_excel_buffer.seek(0) # Buffer'ı başa sarın
-
-                            st.download_button(
-                                label="Yıllık Korelasyon Sonuçlarını Excel İndir",
-                                data=yearly_corr_excel_buffer.getvalue(), # Bellekteki Excel içeriğini verin
-                                file_name="yillik_gecikmeli_korelasyon_sonuclari.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-                        else:
-                            st.info("Ayarlı p-değeri < 0.05 olan anlamlı yıllık gecikmeli korelasyon bulunamadı.")
-                    else:
-                        st.info("Yıllık korelasyon analizi için p-değeri hesaplanamadı.")
-                else:
-                    st.info("Yıllık gecikmeli korelasyon analizi için yeterli veri bulunamadı veya bir hata oluştu.")
+                weekly_data_overall['Week_End_Date'] = weekly_data_overall['Week_Start_Date'] + timedelta(days=
 
 
                 st.subheader("Dönemsel (Rolling Window) Korelasyon Sonuçları")
