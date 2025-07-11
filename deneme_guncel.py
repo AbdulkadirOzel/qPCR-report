@@ -9,7 +9,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.cluster import KMeans, DBSCAN # Added DBSCAN
 import plotly.express as px
 import warnings
-from datetime import datetime
+from datetime import datetime, timedelta, date # datetime ve timedelta import edildi
 import os
 import base64 # Import base64 for the download button
 import tempfile
@@ -20,8 +20,15 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy.stats as sps
+import scipy.stats as sps # Pearsonr için
 from sklearn.metrics import roc_curve, roc_auc_score
+from statsmodels.stats.multitest import multipletests # Bonferroni düzeltmesi için
+from rolling_window_tmp_gem import perform_lagged_correlation_analysis_and_plot
+
+import calendar # Haftalık tarihleri doğru bulmak için gerekli
+import io # Bu satırı dosyanızın en başına ekleyin
+
+# tqdm kaldırıldı, Streamlit'in kendi progress barını kullanacağız.
 
 # Set up the app
 st.set_page_config(layout="wide", page_title="Respiratory Virus Analysis")
@@ -74,6 +81,24 @@ with st.sidebar:
 
 # Main app content
 st.title("Respiratory Virus Analysis Dashboard")
+
+def iso_week_start(yil, hafta):
+    try:
+        return date.fromisocalendar(int(yil), int(hafta), 1)
+    except:
+        return pd.NaT
+
+def format_p(p):
+    try:
+        p = float(p)
+        if p < 1e-4 and p > 0:
+            return "<0.0001"
+        elif p == 0:
+            return "<1e-16"
+        else:
+            return f"{p:.4g}"
+    except:
+        return str(p)
 
 # Load and process data
 @st.cache_data
@@ -201,13 +226,12 @@ def load_data(file_path):
         # Identify virus columns from a predefined template list
         # --- MODIFICATION: Update virus column names to match provided headers ---
         virus_columns_template = [
-            'Adenovirus', 'Coronavirus_HKU1', 'Enterovirus_Solunum',
-            'Human_Bocavirus', 'Human_Coronavirus_229E', 'Human_Coronavirus_NL63',
+            'Adenovirus', 'Coronavirus_HKU1', 'Human_Bocavirus', 'Human_Coronavirus_229E', 'Human_Coronavirus_NL63',
             'Human_Coronavirus_OC43', 'Human_Metapneumovirus',
-            'Human_parechovirus_Solunum', 'Influenza_A', 'Influenza_B',
+            'Human_parechovirus', 'Influenza_A', 'Influenza_B',
             'Parainfluenza_Virus_1', 'Parainfluenza_Virus_2',
             'Parainfluenza_Virus_3', 'Parainfluenza_Virus_4',
-            'Respiratuvar_sinsityal_virüs_A_B', 'Rhinovirus', 'SARS-COV-2'
+            'Respiratuvar_sinsityal_virüs_A_B', 'Enterovirus_Rhinovirus', 'SARS-COV-2'
         ]
 
         actual_virus_columns = [col for col in virus_columns_template if col in df.columns]
@@ -603,145 +627,746 @@ if "Advanced Statistical Analysis" in analysis_options and actual_virus_columns:
     else:
         st.info("Please select a virus and a grouping variable to perform advanced statistical analysis.")
 
-st.header("7. Logistic Regression Analysis")
-st.write("""
-Çok değişkenli (multivariable) lojistik regresyon ile seçtiğiniz virüsün pozitifliği üzerinde
-yaş, cinsiyet, sıcaklık, nem, sezon vb. değişkenlerin etkisini inceleyebilirsiniz.
-""")
 
-# Hedef virüs seçimi
-target_virus = st.selectbox(
-    "Hedef (Dependent Variable): Analiz etmek istediğiniz virüsü seçin.",
-    actual_virus_columns,
-    key="logreg_target_virus"
-)
+# ... (Streamlit uygulamanızın başlangıç kısmı, set_page_config, CSS,
+#       load_data fonksiyonu, dosya yükleyici ve df DataFrame'inin oluşturulduğu yer) ...
 
-# Bağımsız değişkenleri belirleyelim
-potential_predictors = []
-if 'Yaş' in df.columns: potential_predictors.append('Yaş')
-if 'Cinsiyet' in df.columns: potential_predictors.append('Cinsiyet')
-if env_temp_col in df.columns: potential_predictors.append(env_temp_col)
-if env_hum_col in df.columns: potential_predictors.append(env_hum_col)
-if 'Season' in df.columns: potential_predictors.append('Season')
+# df DataFrame'inin yüklendiğinden ve boş olmadığından emin olun.
+# Bu kod bloğu, Streamlit'in sidebar'ında dosya yüklendikten sonra çalışmalıdır.
+# ... (Streamlit uygulamanızın başlangıç kısmı, set_page_config, CSS,
+#       load_data fonksiyonu, dosya yükleyici ve df DataFrame'inin oluşturulduğu yer) ...
 
-selected_predictors = st.multiselect(
-    "Bağımsız değişkenler (Predictors): İstediğiniz kadar seçebilirsiniz.",
-    potential_predictors,
-    default=potential_predictors
-)
+# ... (Streamlit uygulamanızın başlangıç kısmı, set_page_config, CSS,
+#       load_data fonksiyonu, dosya yükleyici ve df DataFrame'inin oluşturulduğu yer) ...
 
-if st.button("Lojistik Regresyonu Çalıştır"):
-    df_logreg = df.copy()
-    # Hedefi binary'ye çevir
-    df_logreg["target"] = (df_logreg[target_virus] > 0).astype(int)
-    used_cols = ['target'] + selected_predictors
-    df_logreg = df_logreg[used_cols].dropna()
-    
-    # Kategorik değişkenleri dummy'ye çevir
-    categorical_vars = [col for col in selected_predictors if
-                        str(df_logreg[col].dtype) == 'object' or col in ['Cinsiyet', 'Season']]
-    df_logreg = pd.get_dummies(df_logreg, columns=categorical_vars, drop_first=True)
-    df_logreg = df_logreg.astype(float)
+# df DataFrame'inin yüklendiğinden ve boş olmadığından emin olun.
+# Bu kod bloğu, Streamlit'in sidebar'ında dosya yüklendikten sonra çalışmalıdır.
+# ... (Streamlit uygulamanızın başlangıç kısmı, set_page_config, CSS,
+#       load_data fonksiyonu, dosya yükleyici ve df DataFrame'inin oluşturulduğu yer) ...
 
-    if df_logreg.shape[0] < 10:
-        st.warning("Regresyon için yeterli veri yok!")
-    elif df_logreg['target'].nunique() < 2:
-        st.warning("Seçtiğiniz virüs için yeterli pozitif/negatif vaka yok!")
+# df DataFrame'inin yüklendiğinden ve boş olmadığından emin olun.
+# Bu kod bloğu, Streamlit'in sidebar'ında dosya yüklendikten sonra çalışmalıdır.
+if 'df' not in locals() or df.empty:
+    st.info("Lojistik regresyon analizi yapabilmek için lütfen sol kenar çubuğundan bir Excel dosyası yükleyin.")
+else:
+    # --- 7. HEADER: Lojistik Regresyon Analizi Bölümü ---
+    st.markdown("---")
+    st.header("📈 Lojistik Regresyon Analizi")
+    st.write("Bu bölüm, çevresel faktörler (nem ve sıcaklık) ile virüs varlığı arasındaki ilişkileri, seçtiğiniz filtrelemelere göre lojistik regresyon kullanarak inceler.")
+
+    st.subheader("Veri Filtreleme Seçenekleri")
+
+    # Veriyi filtrelemek için filtre seçenekleri
+    filtered_df = df.copy()
+
+    # Cinsiyet Filtresi (Sütun adı 'Cinsiyet', değerler 'Erkek' ve 'Bayan')
+    if 'Cinsiyet' in filtered_df.columns:
+        unique_genders = ['Tümü'] + filtered_df['Cinsiyet'].dropna().unique().tolist()
+        selected_gender = st.radio(
+            "Cinsiyete Göre Filtrele:",
+            options=unique_genders,
+            key="lr_gender_filter_main"
+        )
+        
+        if selected_gender != 'Tümü':
+            filtered_df = filtered_df[filtered_df['Cinsiyet'] == selected_gender]
+            st.info(f"Veri seti sadece '{selected_gender}' cinsiyetine sahip hastaları içerecek şekilde filtrelendi. Kalan örnek sayısı: **{len(filtered_df)}**")
     else:
-        X = df_logreg.drop(columns=['target']).astype(float)
-        y = df_logreg['target'].astype(float)
-        X = sm.add_constant(X)
-
-        logit_model = sm.Logit(y, X)
-        try:
-            result = logit_model.fit(disp=0)
-        except Exception as e:
-            st.error(f"Regresyon sırasında hata: {e}")
-            result = None
-
-        if result:
-            st.subheader("Lojistik Regresyon Sonuçları")
-            summary_df = result.summary2().tables[1]
-            summary_df["Odds Ratio"] = summary_df["Coef."].apply(np.exp)
-            summary_df["CI Lower"] = (summary_df["Coef."] - 1.96*summary_df["Std.Err."]).apply(np.exp)
-            summary_df["CI Upper"] = (summary_df["Coef."] + 1.96*summary_df["Std.Err."]).apply(np.exp)
-
-            # p<0.05 olanları vurgulayalım
-            def highlight_sig(row):
-                # row burada bir pandas Series, yani bir satır
-                p = row["P>|z|"]
-                if p < 0.05:
-                    return ['font-weight: bold; background-color: #d0f5dd'] * len(row)
-                else:
-                    return [''] * len(row)
-            
-            st.dataframe(
-                summary_df[['Odds Ratio', 'CI Lower', 'CI Upper', 'P>|z|']],
-                use_container_width=True
-            )
-
-            # === Odds Ratio Forest Plot ===
-            summary_plot = summary_df.drop("const", errors="ignore")
-            fig, ax = plt.subplots(figsize=(7, 0.7 * len(summary_plot)))
-            ax.errorbar(
-                summary_plot["Odds Ratio"],
-                summary_plot.index,
-                xerr=[
-                    summary_plot["Odds Ratio"] - summary_plot["CI Lower"],
-                    summary_plot["CI Upper"] - summary_plot["Odds Ratio"]
-                ],
-                fmt='o', color='teal', capsize=5, label='Odds Ratio (95% CI)'
-            )
-            ax.axvline(1, color='grey', linestyle='--', lw=1)
-            ax.set_xlabel("Odds Ratio (OR, log scale)")
-            ax.set_xscale("log")
-            ax.set_title("Odds Ratio ve 95% Güven Aralığı (Lojistik Regresyon)")
-            ax.set_ylabel("Değişkenler")
-            plt.tight_layout()
-            st.pyplot(fig)
-
-            # === ROC Curve ===
-            y_pred_prob = result.predict(X)
-            fpr, tpr, _ = roc_curve(y, y_pred_prob)
-            auc_score = roc_auc_score(y, y_pred_prob)
-            fig2, ax2 = plt.subplots()
-            ax2.plot(fpr, tpr, label=f'AUC = {auc_score:.2f}')
-            ax2.plot([0, 1], [0, 1], '--', color='grey')
-            ax2.set_xlabel("1 - Özgüllük (False Positive Rate)")
-            ax2.set_ylabel("Duyarlılık (True Positive Rate)")
-            ax2.set_title("ROC Curve")
-            ax2.legend()
-            st.pyplot(fig2)
-
-            # === Modelin Genel p-Değeri (Likelihood Ratio Test) ===
-            llf_full = result.llf
-            llf_null = result.llnull
-            df_full = result.df_model + 1  # +1: sabit/intercept dahil
-            df_null = 1  # Sadece sabitli model
-            lr_stat = 2 * (llf_full - llf_null)
-            lr_df = df_full - df_null
-            lr_pvalue = sps.chi2.sf(lr_stat, lr_df)
-
-            st.markdown(f"""
-                **Modelin genel anlamlılığı (Likelihood Ratio test):**  
-                - Test statistic: `{lr_stat:.2f}`
-                - df: `{lr_df}`
-                - p-value: `{lr_pvalue:.4g}`
-                """)
+        st.info("Veri setinde 'Cinsiyet' kolonu bulunamadı. Cinsiyet filtresi uygulanamıyor.")
 
 
-            if lr_pvalue < 0.05:
-                st.success("Model genel olarak anlamlıdır (p < 0.05). Yani bağımsız değişkenlerin tamamı bir arada, hedef değişkenin açıklanmasında anlamlı katkı sağlıyor.")
+    # Yaş Grubu Filtresi (Sütun adı 'Yaş')
+    if 'Yaş' in filtered_df.columns and pd.api.types.is_numeric_dtype(filtered_df['Yaş']):
+        min_age_val = int(filtered_df['Yaş'].min()) if not filtered_df['Yaş'].empty else 0
+        max_age_val = int(filtered_df['Yaş'].max()) if not filtered_df['Yaş'].empty else 100
+        
+        age_range = st.slider(
+            "Yaş Aralığına Göre Filtrele:",
+            min_value=min_age_val,
+            max_value=max_age_val,
+            value=(min_age_val, max_age_val),
+            key="lr_age_filter_main"
+        )
+        filtered_df = filtered_df[(filtered_df['Yaş'] >= age_range[0]) & (filtered_df['Yaş'] <= age_range[1])]
+        st.info(f"Veri seti {age_range[0]}-{age_range[1]} yaş aralığına göre filtrelendi. Kalan örnek sayısı: **{len(filtered_df)}**")
+    else:
+        st.info("Veri setinde 'Yaş' kolonu bulunamadı veya sayısal değil. Yaş filtresi uygulanamıyor.")
+    
+    st.write(f"Filtreleme sonrası analiz için kalan toplam örnek sayısı: **{len(filtered_df)}**")
+
+    if filtered_df.empty:
+        st.warning("Uygulanan filtreler sonucunda veri seti boş kaldı. Lütfen filtreleme seçimlerinizi gözden geçirin.")
+        st.stop()
+
+    st.subheader("Lojistik Regresyon Parametre Seçimi")
+
+    numeric_cols = filtered_df.select_dtypes(include=np.number).columns.tolist()
+
+    if not numeric_cols:
+        st.warning("Filtrelenmiş veri setinde sayısal kolon bulunamadı. Nem ve Sıcaklık kolonları seçilemiyor.")
+        st.stop()
+
+    env_col1_options = [col for col in numeric_cols if 'nem' in col.lower() or 'humidity' in col.lower()]
+    default_nem = env_col1_options[0] if env_col1_options else (numeric_cols[0] if numeric_cols else None)
+
+    env_col2_options = [col for col in numeric_cols if 'sıcaklık' in col.lower() or 'temp' in col.lower()]
+    default_sicaklik = env_col2_options[0] if env_col2_options else None
+    
+    if default_nem and default_nem in env_col2_options:
+        temp_env_col2_options = [col for col in env_col2_options if col != default_nem]
+        env_col2_options = temp_env_col2_options
+        if default_sicaklik == default_nem and env_col2_options:
+            default_sicaklik = env_col2_options[0]
+
+    if default_sicaklik is None and len(numeric_cols) > 0:
+        if len(numeric_cols) > 1 and nem_kolon == numeric_cols[0]:
+            default_sicaklik = numeric_cols[1]
+        elif len(numeric_cols) > 0:
+            default_sicaklik = numeric_cols[0]
+        else:
+            default_sicaklik = None
+
+
+    nem_kolon = st.selectbox(
+        "Nem Kolonunu Seçin:",
+        options=numeric_cols,
+        index=numeric_cols.index(default_nem) if default_nem in numeric_cols else 0,
+        key="nem_lr_select"
+    )
+    sicaklik_kolon = st.selectbox(
+        "Sıcaklık Kolonunu Seçin:",
+        options=numeric_cols,
+        index=numeric_cols.index(default_sicaklik) if default_sicaklik in numeric_cols else (1 if len(numeric_cols)>1 else 0),
+        key="sicaklik_lr_select"
+    )
+    
+    if st.button("Lojistik Regresyon Analizi Başlat", key="start_lr_analysis"):
+        with st.spinner("Analizler yapılıyor... Bu biraz zaman alabilir."):
+            excluded_from_virus_detection = [nem_kolon, sicaklik_kolon, 'Yaş', 'Cinsiyet', 'Month', 'Hafta', 'Yıl', 'Örnek',
+                                             'Haftalık_Sıcaklık', 'Dogum Tar.', 'Çalışma Ayı', 'Çalışma Haftası', 'Çalışma Yılı',
+                                             ]
+            excluded_from_virus_detection = [col for col in excluded_from_virus_detection if col in filtered_df.columns]
+
+            tum_virusler = [col for col in filtered_df.columns
+                            if ((filtered_df[col].dropna().isin([0, 1]).all() and not filtered_df[col].dropna().empty) or (filtered_df[col].dropna().unique().tolist() == [0, 1]) or (filtered_df[col].dropna().unique().tolist() == [1, 0]))
+                            and col not in excluded_from_virus_detection]
+
+            st.write(f"Tespit edilen tüm potansiyel virüs kolonları (0/1 ikili değer içeren): **{len(tum_virusler)}**")
+            if tum_virusler:
+                with st.expander("Tüm Virüs Kolonlarını Göster"):
+                    st.write(tum_virusler)
             else:
-                st.warning("Modelin genel anlamlılığı yetersiz (p ≥ 0.05). Modelin açıklama gücü zayıf olabilir.")
+                st.warning("0/1 ikili değer içeren virüs kolonu tespit edilemedi. Lütfen veri setinizi kontrol edin veya sütun adlarını ayarlayın.")
+                st.stop()
 
-            st.markdown("""
-            **Odds Ratio (OR) > 1:** Değişken arttıkça hedef virüs pozitifliği olasılığı artıyor.<br>
-            **OR < 1:** Değişken arttıkça olasılık azalıyor.<br>
-            **p < 0.05:** İstatistiksel olarak anlamlı.<br>
-            <br>
-            *Sonuçlar model varsayımlarına ve verinin yapısına göre yorumlanmalıdır.*
-            """, unsafe_allow_html=True)
+
+            virus_cols = [col for col in tum_virusler
+                          if filtered_df[col].nunique(dropna=True) == 2]
+
+
+            st.write(f"Analize alınacak virüs kolonları (pozitif ve negatif gözlemler içeren): **{len(virus_cols)}**")
+            if virus_cols:
+                with st.expander("Analize Alınacak Virüs Kolonlarını Göster"):
+                    st.write(virus_cols)
+            else:
+                st.warning("Filtreleme sonrası analize uygun (hem 0 hem de 1 içeren) virüs kolonu bulunamadı.")
+                st.stop()
+
+            results = []
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            for i, virus in enumerate(virus_cols):
+                status_text.text(f"Analiz ediliyor: **{virus}** ({i+1}/{len(virus_cols)})")
+                
+                current_model_df = filtered_df[[virus, nem_kolon, sicaklik_kolon]].copy().dropna()
+                
+                if current_model_df.empty:
+                    st.warning(f"Uyarı: '{virus}' için ilgili kolonlarda yeterli (NaN olmayan) veri bulunamadı, bu virüs atlanıyor.")
+                    continue
+                
+                if current_model_df[virus].nunique() < 2:
+                    st.warning(f"Uyarı: '{virus}' sütunu sadece tek bir değer içerdiği için (hepsi 0 veya hepsi 1) lojistik regresyon uygulanamıyor. Atlanıyor.")
+                    continue
+
+                q_sicaklik = f"Q('{sicaklik_kolon}')"
+                q_nem = f"Q('{nem_kolon}')"
+
+                # 1) Sadece sıcaklık modeli
+                try:
+                    formula = f"{virus} ~ {q_sicaklik}"
+                    model = smf.logit(formula=formula, data=current_model_df).fit(disp=0)
+                    conf_int = np.exp(model.conf_int()) # Katsayıların CI'larını exponentiate et
+                    
+                    for param in model.params.index:
+                        if param == 'Intercept': continue
+                        or_value = np.exp(model.params[param])
+                        pval = model.pvalues[param]
+                        # Güven aralığı alt ve üst sınırlarını ekliyoruz
+                        or_lower_ci = conf_int.loc[param, 0]
+                        or_upper_ci = conf_int.loc[param, 1]
+                        
+                        results.append({
+                            'Target_Virus': virus,
+                            'Model': 'Sadece Sıcaklık',
+                            'Parameter': param,
+                            'OR': or_value,
+                            'OR_lower_CI': or_lower_ci, # Yeni eklendi
+                            'OR_upper_CI': or_upper_ci, # Yeni eklendi
+                            'p-value': pval,
+                            'N_Samples': len(current_model_df)
+                        })
+                except Exception as e:
+                    pass
+
+                # 2) Sadece nem modeli
+                try:
+                    formula = f"{virus} ~ {q_nem}"
+                    model = smf.logit(formula=formula, data=current_model_df).fit(disp=0)
+                    conf_int = np.exp(model.conf_int()) # Katsayıların CI'larını exponentiate et
+
+                    for param in model.params.index:
+                        if param == 'Intercept': continue
+                        or_value = np.exp(model.params[param])
+                        pval = model.pvalues[param]
+                        # Güven aralığı alt ve üst sınırlarını ekliyoruz
+                        or_lower_ci = conf_int.loc[param, 0]
+                        or_upper_ci = conf_int.loc[param, 1]
+
+                        results.append({
+                            'Target_Virus': virus,
+                            'Model': 'Sadece Nem',
+                            'Parameter': param,
+                            'OR': or_value,
+                            'OR_lower_CI': or_lower_ci, # Yeni eklendi
+                            'OR_upper_CI': or_upper_ci, # Yeni eklendi
+                            'p-value': pval,
+                            'N_Samples': len(current_model_df)
+                        })
+                except Exception as e:
+                    pass
+
+                # 3) Kombinasyon (Sıcaklık ve Nem) modeli
+                try:
+                    formula = f"{virus} ~ {q_sicaklik} + {q_nem}"
+                    model = smf.logit(formula=formula, data=current_model_df).fit(disp=0)
+                    conf_int = np.exp(model.conf_int()) # Katsayıların CI'larını exponentiate et
+
+                    for param in model.params.index:
+                        if param == 'Intercept': continue
+                        or_value = np.exp(model.params[param])
+                        pval = model.pvalues[param]
+                        # Güven aralığı alt ve üst sınırlarını ekliyoruz
+                        or_lower_ci = conf_int.loc[param, 0]
+                        or_upper_ci = conf_int.loc[param, 1]
+
+                        results.append({
+                            'Target_Virus': virus,
+                            'Model': 'Sıcaklık + Nem',
+                            'Parameter': param,
+                            'OR': or_value,
+                            'OR_lower_CI': or_lower_ci, # Yeni eklendi
+                            'OR_upper_CI': or_upper_ci, # Yeni eklendi
+                            'p-value': pval,
+                            'N_Samples': len(current_model_df)
+                        })
+                except Exception as e:
+                    pass
+                
+                progress_bar.progress((i + 1) / len(virus_cols))
+            
+            status_text.text("Analiz tamamlandı!")
+            progress_bar.empty()
+
+            results_df = pd.DataFrame(results)
+
+            st.subheader("Lojistik Regresyon Sonuçları")
+            if not results_df.empty:
+                results_df['p-value'] = pd.to_numeric(results_df['p-value'], errors='coerce')
+                results_df.dropna(subset=['p-value'], inplace=True) 
+
+                if not results_df.empty:
+                    # adj_p-value hesaplaması
+                    reject, pvals_corrected, _, _ = multipletests(results_df['p-value'], method='bonferroni', alpha=0.05)
+                    results_df['adj_p-value'] = pvals_corrected
+                    
+                    # Sadece anlamlı olanlar ve artık CI sütunları da dahil
+                    significant_df = results_df[results_df['adj_p-value'] < 0.05].copy()
+                    
+                    # Görüntülenecek sütunları düzenleyebiliriz, örneğin OR_lower_CI ve OR_upper_CI'ı OR'ın yanına getirebiliriz
+                    if not significant_df.empty:
+                        # Sütun sırasını belirleyelim
+                        display_cols = [
+                            'Target_Virus', 'Model', 'Parameter', 'OR', 
+                            'OR_lower_CI', 'OR_upper_CI', 'p-value', 'adj_p-value', 'N_Samples'
+                        ]
+                        
+                        st.write(f"Bonferroni düzeltmesi sonrası toplam anlamlı regresyon sonucu: **{len(significant_df)}** satır")
+                        st.dataframe(significant_df[display_cols].sort_values(by='adj_p-value'))
+                        
+                        import io
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            significant_df[display_cols].to_excel(writer, index=False, sheet_name='Anlamlı Sonuçlar')
+                        xlsx_data = output.getvalue()
+
+
+                        excel_buffer = io.BytesIO()
+                        significant_yearly_corr_df.to_excel(excel_buffer, index=False)
+                        excel_buffer.seek(0) # Buffer'ı başa sarın ki içeriği okunabilsin
+
+                        st.download_button(
+                            label="Önemli Yıllık Korelasyonu İndir",
+                            data=excel_buffer.getvalue(), # Buffer'ın içeriğini (baytları) data parametresine verin
+                            file_name="significant_yearly_correlation.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    else:
+                        st.info("Analiz yapıldı fakat Bonferroni düzeltmesi sonrası 0.05'ten küçük p-değerine sahip anlamlı sonuç bulunamadı.")
+                else:
+                    st.warning("p-değerleri dönüştürüldükten sonra sonuç DataFrame'i boş kaldı. Lütfen verilerinizi kontrol edin.")
+            else:
+                st.warning("Hiçbir lojistik regresyon modeli oluşturulamadı. Lütfen giriş verilerinizi, seçilen parametreleri ve filtreleri kontrol edin.")
+
+# ... (Bu noktanın altında genellikle generate_html_report_streamlit fonksiyon tanımı ve
+#       if st.button("Generate Full Report"): bloğu yer alır.) ...
+
+
+# --- YENİ BÖLÜM: Gecikmeli ve Dönemsel Korelasyon Analizi ---
+st.markdown("---")
+st.header("⏳ Gecikmeli ve Dönemsel Korelasyon Analizi")
+st.write("Bu bölüm, çevresel faktörler ile virüs prevalansı arasındaki zaman gecikmeli ilişkileri ve bu ilişkilerin zaman içinde nasıl değiştiğini inceler.")
+
+
+# Make a copy to avoid modifying the main df directly for this section's pre-processing
+analysis_df = df.copy()
+
+# Ensure 'Yıl' and 'Hafta' are available and correct type for aggregation
+if 'Yıl' not in analysis_df.columns:
+    analysis_df['Yıl'] = analysis_df['Çalisma Tar.'].dt.year
+if 'Hafta' not in analysis_df.columns:
+    analysis_df['Hafta'] = analysis_df['Çalisma Tar.'].dt.isocalendar().week.astype(int)
+
+# Select Environmental Column
+env_cols = analysis_df.select_dtypes(include=np.number).columns.tolist()
+# Filter out date-related numeric cols if they aren't true environmental factors
+env_cols = [col for col in env_cols if col not in ['Yıl', 'Hafta', 'Ay', 'Örnek', 'Dogum Tar.']] # 'Dogum Tar.' added if it's numeric
+
+# Try to suggest a default environmental column
+default_env_col = None
+if 'Haftalık_Sıcaklık' in env_cols:
+    default_env_col = 'Haftalık_Sıcaklık'
+elif 'Temp_ay_ortalaması' in env_cols:
+    default_env_col = 'Temp_ay_ortalaması'
+elif 'Sicaklik' in env_cols:
+    default_env_col = 'Sicaklik'
+elif env_cols:
+    default_env_col = env_cols[0]
+
+if not default_env_col:
+    st.warning("Analiz için uygun sayısal çevresel faktör kolonu bulunamadı. Lütfen veri setinizi kontrol edin.")
+    # Removed st.stop() to allow the app to continue loading
+    # st.stop()
+else:
+    selected_env_col = st.selectbox(
+        "Çevresel Faktör Kolonunu Seçin:",
+        options=env_cols,
+        index=env_cols.index(default_env_col) if default_env_col in env_cols else 0,
+        key="lag_env_select"
+    )
+    
+    st.subheader("Parametre Seçimi")
+    
+    # Determine virus columns for this section (re-use actual_virus_columns from load_data)
+    # lag_virus_cols = actual_virus_columns # This variable needs to be defined in the context where this snippet is used. Assuming it's defined elsewhere.
+    lag_virus_cols = actual_virus_columns # Placeholder, replace with actual_virus_columns from your full app
+
+    if not lag_virus_cols:
+        st.warning("0/1 ikili değer içeren virüs kolonu tespit edilemedi. Lütfen veri setinizi kontrol edin veya sütun adlarını ayarlayın.")
+        # st.stop()
+        
+    # UI for Lagged Correlation
+    max_lag_weeks = st.slider("Maksimum Gecikme Haftası (0-8):", min_value=0, max_value=12, value=8, key="max_lag_weeks")
+
+    # UI for Rolling Window
+    st.markdown("---")
+    st.subheader("Dönemsel (Rolling Window) Korelasyon Ayarları")
+    
+
+
+    # User selects the specific lag to use for rolling window analysis
+    available_lags = list(range(max_lag_weeks + 1))
+
+    rolling_window_size = st.slider(
+        "Dönemsel Pencere Boyutu (Hafta):",
+        min_value=0, max_value=24, value=12, step=1,
+        key="rolling_window_size"
+    )
+    
+    if st.button("Korelasyon Analizlerini Başlat", key="start_correlation_analysis"):
+        with st.spinner("Korelasyon analizleri yapılıyor ve grafikler oluşturuluyor..."):
+            # --- Haftalık Veri Agregasyonu ---
+            # Bu kısım, yıllık ve dönemsel analizler için temel veriyi toplar
+            weekly_data_overall = analysis_df.groupby(['Yıl', 'Hafta']).agg(
+                Total_Samples=('Örnek', 'count'), 
+                **{f'Positive_{v}': (v, 'sum') for v in lag_virus_cols},
+                **{f'Avg_{selected_env_col}': (selected_env_col, 'mean')} 
+            ).reset_index()
+
+            weekly_data_overall['Hafta_Başı_Tarihi'] = weekly_data_overall.apply(
+                lambda x: iso_week_start(x['Yıl'], x['Hafta']), axis=1
+            )
+
+            for v in lag_virus_cols:
+                weekly_data_overall[f'Prevalence_{v}'] = weekly_data_overall[f'Positive_{v}'] / weekly_data_overall['Total_Samples']
+            
+            # Eksik haftalık verileri düzgünleştirmek için
+            # Eğer haftalık_veri_overall boşsa veya gerekli sütunlar yoksa uyarı ver
+            if weekly_data_overall.empty or f'Avg_{selected_env_col}' not in weekly_data_overall.columns:
+                st.warning("Haftalık veri toplama başarısız oldu veya çevresel kolon bulunamadı. Lütfen veri setinizi ve kolon adlarını kontrol edin.")
+                # st.stop() # Hatanın devamını engellemek için durdurma
+            else:
+                # Create a date for each week for plotting and rolling window indexing
+                # Hafta sonu tarihlerini hesaplamak için calendar modülünü kullanabiliriz.
+                # datetime.fromisocalendar, ISO yıl, hafta ve haftanın günü ile tarih oluşturur.
+                # Pazartesiyi (1) kullanarak haftanın başlangıcını bulalım.
+                # deneme_guncel_tmp2.py (yaklaşık olarak 1018. satır - bu kısmı komple değiştirin)
+
+                # Yıl ve hafta numarasını birleştirerek pd.to_datetime için uygun bir string formatı oluşturun
+                weekly_data_overall['YearWeekDay_Str'] = weekly_data_overall['Yıl'].astype(str) + '-W' + \
+                                                        weekly_data_overall['Hafta'].astype(str).str.zfill(2) + '-1'
+
+                # Oluşturulan string'i tarihe çevirin. '%Y-W%W-%w' formatı ISO yıl, hafta ve hafta içi (Pazartesi için 1) anlamına gelir.
+                # errors='coerce' sayesinde geçersiz haftalar NaT (Not a Time) olarak işaretlenir.
+                weekly_data_overall['Week_Start_Date'] = pd.to_datetime(weekly_data_overall['YearWeekDay_Str'], format='%Y-W%W-%w', errors='coerce')
+
+                # Geçici olarak oluşturduğumuz 'YearWeekDay_Str' sütununu kaldırın
+                weekly_data_overall.drop(columns=['YearWeekDay_Str'], inplace=True)
+
+                # Geçersiz veya dönüştürülemeyen tarihler içeren satırları kaldırın (NaT değerleri)
+                weekly_data_overall.dropna(subset=['Week_Start_Date'], inplace=True)
+                    
+                    
+                
+                weekly_data_overall.sort_values(by='Week_Start_Date', inplace=True)
+                weekly_data_overall['Week_End_Date'] = weekly_data_overall['Week_Start_Date'] + timedelta(days=6)
+
+
+                st.subheader("Yıllık Gecikmeli Korelasyon Sonuçları")
+                # --- Yıllık Gecikmeli Korelasyon Analizi ---
+                yearly_correlation_results = []
+                years = weekly_data_overall['Yıl'].unique()
+
+                for year in years:
+                    yearly_df = weekly_data_overall[weekly_data_overall['Yıl'] == year].copy()
+                    
+                    if yearly_df.empty: continue
+
+                    for virus_col in lag_virus_cols:
+                        # Virüs prevalans kolonu yoksa atla
+                        if f'Prevalence_{virus_col}' not in yearly_df.columns:
+                            continue
+
+                        for lag in range(max_lag_weeks + 1):
+                            if len(yearly_df) > lag:
+                                lagged_env_col_data = yearly_df[f'Avg_{selected_env_col}'].shift(lag)
+                                
+                                temp_df = pd.DataFrame({
+                                    'Virüs_Haftası': yearly_df['Hafta'],
+                                    'Virüs_Tarihi': yearly_df['Hafta_Başı_Tarihi'],
+                                    'Çevresel_Haftası': yearly_df['Hafta'] - lag,
+                                    'Çevresel_Tarihi': yearly_df['Hafta_Başı_Tarihi'].shift(lag),
+                                    'Prevalence': yearly_df[f'Prevalence_{virus_col}'],
+                                    'Lagged_Env': lagged_env_col_data
+                                }).dropna()
+
+                                # Korelasyon için en az 2 veri noktası ve her iki seride de varyasyon olmalı
+                                if len(temp_df) > 1 and temp_df['Prevalence'].nunique() > 1 and temp_df['Lagged_Env'].nunique() > 1:
+                                    try:
+                                        r_value, p_value = sps.pearsonr(temp_df['Lagged_Env'], temp_df['Prevalence'])
+                                        
+                                        sig_level = ''
+                                        if p_value < 0.001: sig_level = '***'
+                                        elif p_value < 0.01: sig_level = '**'
+                                        elif p_value < 0.05: sig_level = '*'
+
+                                        yearly_correlation_results.append({
+                                            'Virüs': virus_col,
+                                            'Yıl': year,
+                                            'Gecikme (Hafta)': lag,
+                                            f'{selected_env_col}_Pearson_R': r_value,
+                                            'p-değeri': p_value,
+                                            'Anlamlılık': sig_level,
+                                            'Örnek_Sayısı': len(temp_df),
+                                            'Başlangıç_Tarihi': temp_df['Virüs_Tarihi'].min(),
+                                            'Bitiş_Tarihi': temp_df['Virüs_Tarihi'].max(),
+                                            'Çevresel_Başlangıç_Tarihi': temp_df['Çevresel_Tarihi'].min(),
+                                            'Çevresel_Bitiş_Tarihi': temp_df['Çevresel_Tarihi'].max(),
+                                        })
+                                    except Exception as e:
+                                        pass
+
+                yearly_corr_df = pd.DataFrame(yearly_correlation_results)
+
+                if not yearly_corr_df.empty:
+                    if 'p-değeri' in yearly_corr_df.columns and not yearly_corr_df['p-değeri'].empty:
+                        # Bonferroni düzeltmesi (Tüm testler için)
+                        reject, pvals_corrected, _, _ = multipletests(yearly_corr_df['p-değeri'], method='bonferroni', alpha=0.05)
+                        yearly_corr_df['Ayarlı_p-değeri'] = pvals_corrected
+                        
+                        significant_yearly_corr_df = yearly_corr_df[yearly_corr_df['Ayarlı_p-değeri'] < 0.05].copy()
+                        
+                        if not significant_yearly_corr_df.empty:
+                            st.dataframe(significant_yearly_corr_df.sort_values(by=['Yıl', 'Ayarlı_p-değeri']))
+                            
+                            # Yıllık Korelasyon sonuçlarını bellekteki bir Excel dosyasına kaydedin
+                            yearly_corr_excel_buffer = io.BytesIO()
+                            significant_yearly_corr_df.to_excel(yearly_corr_excel_buffer, index=False)
+                            yearly_corr_excel_buffer.seek(0) # Buffer'ı başa sarın
+
+                            st.download_button(
+                                label="Yıllık Korelasyon Sonuçlarını Excel İndir",
+                                data=yearly_corr_excel_buffer.getvalue(), # Bellekteki Excel içeriğini verin
+                                file_name="yillik_gecikmeli_korelasyon_sonuclari.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        else:
+                            st.info("Ayarlı p-değeri < 0.05 olan anlamlı yıllık gecikmeli korelasyon bulunamadı.")
+                    else:
+                        st.info("Yıllık korelasyon analizi için p-değeri hesaplanamadı.")
+                else:
+                    st.info("Yıllık gecikmeli korelasyon analizi için yeterli veri bulunamadı veya bir hata oluştu.")
+
+
+                st.subheader("Dönemsel (Rolling Window) Korelasyon Sonuçları")
+                # --- Dönemsel (Rolling Window) Korelasyon Analizi ---
+                rolling_window_results = []
+
+                import io
+                from scipy.stats import pearsonr
+                from statsmodels.stats.multitest import multipletests
+
+                st.subheader("Dönemsel (Rolling Window) Korelasyon Sonuçları (Tüm Virüsler, Tüm Lag/Window)")
+                st.info("Sadece Bonferroni düzeltmesi ile anlamlı çıkan korelasyonlar gösterilmektedir (Bonferroni p<0.05).")
+
+                max_lag_weeks = st.slider("Maksimum Gecikme Haftası (1-8)", min_value=1, max_value=8, value=4)
+                max_window = st.slider("Maksimum Pencere Boyutu (Hafta)", min_value=2, max_value=8, value=4)
+
+                results = []
+                for virus_col in lag_virus_cols:
+                    for lag in range(2, 5):        # Sadece 2-4 hafta lag!
+                        for window in range(3, 6): # Sadece 3-5 hafta window!
+                            dfw = weekly_data_overall.sort_values('Week_Start_Date').reset_index(drop=True)
+                            lagged_env = dfw[f'Avg_{selected_env_col}'].shift(lag)
+                            for i in range(len(dfw) - window - lag + 1):
+                                v_window = dfw.iloc[i + lag : i + lag + window]
+                                e_window = dfw.iloc[i : i + window]
+                                if v_window[f'Prevalence_{virus_col}'].nunique() < 2 or e_window[f'Avg_{selected_env_col}'].nunique() < 2:
+                                    continue
+                                try:
+                                    r, p = pearsonr(e_window[f'Avg_{selected_env_col}'], v_window[f'Prevalence_{virus_col}'])
+                                except:
+                                    continue
+                                if p < 0.05:
+                                    results.append({
+                                        'Virüs': virus_col,
+                                        'Lag': lag,
+                                        'Pencere': window,
+                                        'Çevresel_Başlangıç': e_window['Week_Start_Date'].iloc[0].date(),
+                                        'Çevresel_Bitiş': e_window['Week_Start_Date'].iloc[-1].date(),
+                                        'Virüs_Başlangıç': v_window['Week_Start_Date'].iloc[0].date(),
+                                        'Virüs_Bitiş': v_window['Week_Start_Date'].iloc[-1].date(),
+                                        'Korelasyon': f"{r:.3f}",
+                                        'p-değeri': p,
+                                        'Çevre_Başlangıç_Degeri': round(e_window[f'Avg_{selected_env_col}'].iloc[0], 2),
+                                        'Çevre_Bitiş_Degeri': round(e_window[f'Avg_{selected_env_col}'].iloc[-1], 2),
+                                        'Virüs_Başlangıç_Vaka': int(v_window[f'Positive_{virus_col}'].iloc[0]),
+                                        'Virüs_Bitiş_Vaka':     int(v_window[f'Positive_{virus_col}'].iloc[-1]),
+                                    })
+                rolling_sig_df = pd.DataFrame(results)
+
+                if not rolling_sig_df.empty:
+                    N = len(rolling_sig_df)
+                    # Bonferroni ve FDR düzeltmeleri
+                    rolling_sig_df['Bonferroni_p'] = (rolling_sig_df['p-değeri'].astype(float) * N).clip(upper=1)
+                    _, fdr_p, _, _ = multipletests(rolling_sig_df['p-değeri'].astype(float), alpha=0.05, method='fdr_bh')
+                    rolling_sig_df['FDR_p'] = fdr_p
+                    # Bilimsel p-değeri gösterimi
+                    for col in ['p-değeri', 'Bonferroni_p', 'FDR_p']:
+                        rolling_sig_df[col] = rolling_sig_df[col].apply(format_p)
+                    # Sadece Bonferroni anlamlıları tut
+                    rolling_sig_df = rolling_sig_df[rolling_sig_df['Bonferroni_p'].apply(lambda x: not x.startswith('>') and float(x.replace('<','').replace('e','E').replace('.','0.')) < 0.05 if x[0].isdigit() else True)]
+                    rolling_sig_df['Anlamlılık'] = '***'
+                    # Sonuçları göster ve indir
+                    if not rolling_sig_df.empty:
+                        st.dataframe(rolling_sig_df.sort_values('p-değeri'))
+                        import io
+                        buffer = io.BytesIO()
+                        rolling_sig_df.to_excel(buffer, index=False)
+                        st.download_button("Sonuçları Excel Olarak İndir", buffer.getvalue(), "donemsel_korelasyon_bonferroni.xlsx")
+                    else:
+                        st.warning("Belirtilen lag ve pencere aralığında, Bonferroni düzeltmesiyle anlamlı korelasyon bulunamadı.")
+                else:
+                    st.warning("Hiç anlamlı korelasyonlu dönem bulunamadı.")
+
+
+
+
+            
+    else:
+        st.info("Lütfen 'Korelasyon Analizlerini Başlat' butonuna basarak analizleri başlatın.")
+
+    # Sonuçları Yorumlama Rehberi
+    st.markdown("---")
+    st.subheader("Sonuçları Yorumlama Rehberi")
+    st.info("""
+        **Pearson R Değeri:**
+        * **Pozitif (R > 0):** Çevresel faktör arttıkça virüs prevalansı da artma eğilimindedir. (Örn: Sıcaklık arttıkça virüs artıyor)
+        * **Negatif (R < 0):** Çevresel faktör arttıkça virüs prevalansı azalma eğilimindedir. (Örn: Sıcaklık arttıkça virüs azalıyor)
+        * **Güç (Mutlak Değer):**
+            * 0.0 - 0.2: Çok zayıf/İhmal edilebilir
+            * 0.2 - 0.4: Zayıf
+            * 0.4 - 0.6: Orta
+            * 0.6 - 0.8: Güçlü
+            * 0.8 - 1.0: Çok Güçlü
+        
+        **Gecikme (Hafta):**
+        * Gecikme, çevresel faktördeki bir değişimin virüs prevalansını etkilemesinin ne kadar zaman aldığını gösterir. Örneğin, 4 hafta gecikmeli bir korelasyon, 4 hafta önceki sıcaklığın şimdiki virüs prevalansıyla ilişkili olduğunu gösterir.
+
+        **Dönemsel (Rolling Window) Korelasyon:**
+        * Bu analiz, belirli bir çevresel faktör-virüs ilişkisinin gücünün ve yönünün zaman içinde (mevsimden mevsime) nasıl değiştiğini gösterir. Aynı ilişkinin yılın bir bölümünde çok güçlü ve anlamlıyken, başka bir bölümünde zayıf veya anlamsız olabileceğini gözlemleyebilirsiniz.
+        * Timeline grafiği, anlamlı ilişkilerin hangi zaman aralıklarında ortaya çıktığını görselleştirir.
+
+        **Unutmayın:** Korelasyon nedensellik değildir. Bu analizler, çevresel faktörler ile virüs yayılımı arasındaki istatistiksel ilişkileri ortaya koyar, ancak birinin diğerine doğrudan neden olduğunu kanıtlamaz.
+    """)
+
+
+# ... (deneme_guncel_tmp2.py dosyanızın kalan kodu)
+# Satır 400 civarı veya rapor indirme düğmesinden hemen önce:
+
+# Mevcut "Download report" kısmından ÖNCE bu yeni rolling_window analiz bloğunu ekleyin.
+
+# ----------------------------------------------------------------------------------------------------------------------
+# | Yeni Eklenen Bölüm: Gecikmeli Korelasyon Analizi (Rolling Window)                                                  |
+# ----------------------------------------------------------------------------------------------------------------------
+
+# final_merged_df_weekly yerine st.session_state.df kontrol ediyoruz.
+# df'in st.session_state'te saklandığını ve ana işleme sonrası kullanıma hazır olduğunu varsayıyoruz.
+if 'df' in st.session_state and st.session_state.df is not None: # 'df' ana DataFrame'inizse bu kontrolü kullanın
+    processed_df_for_analysis = st.session_state.df # Artık bu bizim analiz DataFrame'imiz
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("Gecikmeli Korelasyon Analizi (Rolling Window)")
+
+    # Virüs sütunlarını dinamik olarak al
+    available_virus_columns = [col for col in processed_df_for_analysis.columns if col.endswith('_Prevalansı')]
+
+    if not available_virus_columns:
+        st.sidebar.warning("Analiz için uygun virüs prevalansı sütunu bulunamadı (Örn: 'VirüsAdı_Prevalansı').")
+        selected_virus_columns = []
+    else:
+        selected_virus_columns = st.sidebar.multiselect(
+            "Analiz Edilecek Virüs(ler)i Seçin:",
+            options=available_virus_columns,
+            default=available_virus_columns
+        )
+
+    rolling_window_size_input = st.sidebar.slider(
+        "Dönemsel Pencere Boyutu (Hafta):",
+        min_value=0,
+        max_value=52,
+        value=12,
+        step=1
+    )
+    max_lag_weeks_input = st.sidebar.slider(
+        "Maksimum Gecikme (Hafta):",
+        min_value=0,
+        max_value=20,
+        value=8,
+        step=1
+    )
+
+    perform_rolling_analysis = st.sidebar.button("Gecikmeli Korelasyon Analizini Başlat")
+
+    if perform_rolling_analysis and selected_virus_columns:
+        st.subheader("Gecikmeli Korelasyon Analizi Sonuçları")
+        st.info("Analiz başlatılıyor, bu işlem biraz zaman alabilir...")
+
+        for virus_col in actual_virus_columns:
+            st.subheader(f"Dönemsel Gecikmeli Analiz Sonuçları: {virus_col}")
+            overall_corr_df, yearly_corr_df, rolling_corr_df, figures_dict = \
+                perform_lagged_correlation_analysis_and_plot(
+                    base_output_excel_folder="streamlit_rolling_reports",
+                    base_output_plots_folder="streamlit_rolling_plots",
+                    max_lag_weeks=max_lag_weeks,
+                    rolling_window_size=rolling_window_size,
+                    df_input=weekly_data_overall,
+                    virus_column_name=virus_col,
+                    env_factor_column_name=selected_env_col,
+                    save_to_file=False
+                )
+            if rolling_corr_df is not None and not rolling_corr_df.empty:
+                st.dataframe(rolling_corr_df)
+                if 'rolling_corr_trend' in figures_dict:
+                    st.pyplot(figures_dict['rolling_corr_trend'])
+            else:
+                st.info(f"{virus_col} için dönemsel analizde yeterli veri bulunamadı.")
+
+            if overall_corr_df is not None:
+                st.write(f"**{virus_col} - Genel Gecikmeli Korelasyon Tablosu**")
+                st.dataframe(overall_corr_df)
+                if 'overall_heatmap' in figures_dict and figures_dict['overall_heatmap'] is not None:
+                    st.pyplot(figures_dict['overall_heatmap'])
+                    plt.close(figures_dict['overall_heatmap'])
+
+                if yearly_corr_df is not None and not yearly_corr_df.empty:
+                    st.write(f"**{virus_col} - Yıllık Gecikmeli Korelasyon Tablosu**")
+                    st.dataframe(yearly_corr_df)
+                    if 'yearly_heatmap' in figures_dict and figures_dict['yearly_heatmap'] is not None:
+                        st.pyplot(figures_dict['yearly_heatmap'])
+                        plt.close(figures_dict['yearly_heatmap'])
+
+                    if rolling_corr_df is not None and not rolling_corr_df.empty:
+                        st.dataframe(rolling_corr_df.head())
+                        # Görsel varsa göster
+                        if 'rolling_corr_trend' in figures_dict:
+                            st.pyplot(figures_dict['rolling_corr_trend'])
+
+
+                    st.write(f"**{virus_col} - Haftalık Prevalans ve Sıcaklık Trendleri**")
+                    if 'prevalance_temp_trend' in figures_dict and figures_dict['prevalance_temp_trend'] is not None:
+                        st.pyplot(figures_dict['prevalance_temp_trend'])
+                        plt.close(figures_dict['prevalance_temp_trend'])
+
+                    st.write(f"**{virus_col} - Dönemsel Korelasyon Trendi (Pencere: {rolling_window_size_input} Hafta)**")
+                    if 'rolling_corr_trend' in figures_dict and figures_dict['rolling_corr_trend'] is not None:
+                        st.pyplot(figures_dict['rolling_corr_trend'])
+                        plt.close(figures_dict['rolling_corr_trend'])
+
+                st.write(f"**{virus_col} - Aylık Prevalans Dağılımı**")
+                if 'monthly_boxplot' in figures_dict and figures_dict['monthly_boxplot'] is not None:
+                    st.pyplot(figures_dict['monthly_boxplot'])
+                    plt.close(figures_dict['monthly_boxplot'])
+
+                st.write(f"**{virus_col} - Prevalans vs. Sıcaklık Serpme Grafiği**")
+                if 'scatter_plot' in figures_dict and figures_dict['scatter_plot'] is not None:
+                    st.pyplot(figures_dict['scatter_plot'])
+                    plt.close(figures_dict['scatter_plot'])
+
+            else:
+                st.error(f"'{virus_col}' için gecikmeli korelasyon analizi başarısız oldu veya veri bulunamadı.")
+
+        st.success("Tüm gecikmeli korelasyon analizleri tamamlandı!")
+    elif perform_rolling_analysis and not selected_virus_columns:
+        st.warning("Lütfen analiz edilecek en az bir virüs sütunu seçin.")
+
+else:
+    st.info("Gecikmeli Korelasyon Analizi bölümünü görmek için lütfen yukarıdan verilerinizi yükleyin ve işleyin.")
+
+# ----------------------------------------------------------------------------------------------------------------------
+# | Yeni Eklenen Bölüm Sonu                                                                                            |
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 if "Clustering" in analysis_options:
