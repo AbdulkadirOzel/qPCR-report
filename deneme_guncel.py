@@ -997,12 +997,6 @@ else:
 
     # User selects the specific lag to use for rolling window analysis
     available_lags = list(range(max_lag_weeks + 1))
-
-    rolling_window_size = st.slider(
-        "Dönemsel Pencere Boyutu (Hafta):",
-        min_value=0, max_value=24, value=12, step=1,
-        key="rolling_window_size"
-    )
     
     if st.button("Korelasyon Analizlerini Başlat", key="start_correlation_analysis"):
         with st.spinner("Korelasyon analizleri yapılıyor ve grafikler oluşturuluyor..."):
@@ -1149,9 +1143,6 @@ else:
 
                 st.subheader("Dönemsel (Rolling Window) Korelasyon Sonuçları (Tüm Virüsler, Tüm Lag/Window)")
                 st.info("Sadece Bonferroni düzeltmesi ile anlamlı çıkan korelasyonlar gösterilmektedir (Bonferroni p<0.05).")
-
-                max_lag_weeks = st.slider("Maksimum Gecikme Haftası (1-8)", min_value=1, max_value=8, value=4)
-                max_window = st.slider("Maksimum Pencere Boyutu (Hafta)", min_value=2, max_value=8, value=4)
 
                 results = []
                 for virus_col in lag_virus_cols:
