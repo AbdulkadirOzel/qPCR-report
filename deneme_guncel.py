@@ -1038,7 +1038,7 @@ else:
                     
                 
                 weekly_data_overall.sort_values(by='Week_Start_Date', inplace=True)
-                weekly_data_overall['Week_End_Date'] = weekly_data_overall['Week_Start_Date'] + timedelta(days=
+                weekly_data_overall['Week_End_Date'] = weekly_data_overall['Week_Start_Date'] + timedelta(days=6)
 
 
                 st.subheader("Dönemsel (Rolling Window) Korelasyon Sonuçları")
